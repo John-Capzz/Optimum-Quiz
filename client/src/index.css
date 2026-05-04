@@ -1,0 +1,31 @@
+@import url('https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Syne:wght@400;600;700;800&display=swap');
+
+:root {
+  --bg: #050508;
+  --surface: #0e0e14;
+  --surface2: #16161f;
+  --border: rgba(255,255,255,0.07);
+  --accent: #c8f45a;
+  --accent2: #5af4c8;
+  --accent-dim: rgba(200,244,90,0.1);
+  --text: #f0f0f0;
+  --muted: #666680;
+  --red: #ff4d6a;
+  --gold: #ffd166;
+  --silver: #b0b8c8;
+  --bronze: #d4956a;
+}
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html, body, #root { height: 100%; background: var(--bg); color: var(--text); font-family: 'Syne', sans-serif; overflow-x: hidden; }
+::-webkit-scrollbar { width: 4px; }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+
+@keyframes fadeIn   { from { opacity: 0 } to { opacity: 1 } }
+@keyframes fadeUp   { from { opacity: 0; transform: translateY(14px) } to { opacity: 1; transform: translateY(0) } }
+@keyframes scaleIn  { from { transform: scale(0.88); opacity: 0 } to { transform: scale(1); opacity: 1 } }
+@keyframes slideIn  { from { transform: translateX(-16px); opacity: 0 } to { transform: translateX(0); opacity: 1 } }
+@keyframes pulse    { 0%,100% { opacity: 1 } 50% { opacity: 0.35 } }
+@keyframes glow     { 0%,100% { box-shadow: 0 0 20px rgba(200,244,90,0.2) } 50% { box-shadow: 0 0 44px rgba(200,244,90,0.55) } }
+@keyframes countdownPop { 0% { transform: scale(0.5); opacity: 0 } 60% { transform: scale(1.12) } 100% { transform: scale(1); opacity: 1 } }
+@keyframes confettiFall { 0% { transform: translateY(-10px) rotate(0deg); opacity: 1 } 100% { transform: translateY(100vh) rotate(720deg); opacity: 0 } }
