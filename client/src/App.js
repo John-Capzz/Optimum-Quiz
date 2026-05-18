@@ -8,6 +8,9 @@ import Leaderboard from "./components/Leaderboard";
 
 const SOCKET_URL = process.env.REACT_APP_SERVER_URL || "http://localhost:3001";
 
+// Socket created OUTSIDE component so it never re-initializes
+const sock = io(SOCKET_URL);
+
 export default function App() {
   const [lang, setLang] = useState(null);
   const [phase, setPhase] = useState("lobby");
@@ -30,54 +33,44 @@ export default function App() {
   const [joined, setJoined] = useState(false);
   const [joinError, setJoinError] = useState(null);
 
-  // Keep latest lang in a ref so socket callbacks always see current value
   const langRef = useRef(lang);
-  useEffect(() => { langRef.current = lang; }, [lang]);
+  const questionIdRef = useRef(null);
 
-  // Socket created once, never recreated
-  const sockRef = useRef(null);
-  if (!sockRef.current) sockRef.current = io(SOCKET_URL);
-  const sock = sockRef.current;
+  useEffect(() => { langRef.current = lang; }, [lang]);
 
   const notify = useCallback((msg, type = "info") => {
     setToast({ msg, type });
     setTimeout(() => setToast(null), 3500);
   }, []);
 
-  // Translate a question using current lang
-  const translateQ = useCallback((serverQ) => {
-    if (!serverQ) return null;
-    const currentLang = langRef.current;
-    if (!currentLang) return serverQ;
-    const langData = translations[currentLang];
+  const translateQ = (serverQ, langCode) => {
+    if (!serverQ || !langCode) return serverQ;
+    const langData = translations[langCode];
     if (!langData) return serverQ;
     const found = langData.questions.find(q => q.id === serverQ.id);
     if (!found) return serverQ;
     return { ...serverQ, question: found.question, options: found.options };
-  }, []);
+  };
 
-  const getExplanation = useCallback((questionId) => {
-    const currentLang = langRef.current;
-    if (!currentLang || !questionId) return null;
-    const langData = translations[currentLang];
+  const getExplanation = (questionId, langCode) => {
+    if (!questionId || !langCode) return null;
+    const langData = translations[langCode];
     if (!langData) return null;
     const found = langData.questions.find(q => q.id === questionId);
     return found?.explanation || null;
-  }, []);
+  };
 
   useEffect(() => {
-    const s = sock;
-
-    s.on("connect", () => {
-      setMyId(s.id);
+    sock.on("connect", () => {
+      setMyId(sock.id);
       setConnected(true);
       const savedPw = sessionStorage.getItem("oq_host_pw");
-      if (savedPw) s.emit("authHost", { password: savedPw });
+      if (savedPw) sock.emit("authHost", { password: savedPw });
     });
 
-    s.on("disconnect", () => setConnected(false));
+    sock.on("disconnect", () => setConnected(false));
 
-    s.on("gameState", (st) => {
+    sock.on("gameState", (st) => {
       setPhase(st.phase || "lobby");
       setPlayers(st.players || {});
       setLeaderboard(st.leaderboard || []);
@@ -85,33 +78,35 @@ export default function App() {
       setQuestionIndex(st.questionIndex ?? -1);
       if (st.question) {
         setCurrentQuestionId(st.question.id);
-        setQuestion(translateQ(st.question));
+        questionIdRef.current = st.question.id;
+        setQuestion(translateQ(st.question, langRef.current));
       }
     });
 
-    s.on("youAreHost", () => setIsHost(true));
+    sock.on("youAreHost", () => setIsHost(true));
 
-    s.on("authResult", ({ ok, message }) => {
+    sock.on("authResult", ({ ok, message }) => {
       if (!ok) {
         notify(message || "Wrong password", "error");
         sessionStorage.removeItem("oq_host_pw");
       }
     });
 
-    s.on("playerJoined", ({ name }) => notify(`${name} joined!`));
-    s.on("playerLeft",   ({ name }) => notify(`${name} left`, "muted"));
-    s.on("joinError",    (msg)      => setJoinError(msg));
+    sock.on("playerJoined", ({ name }) => notify(`${name} joined!`));
+    sock.on("playerLeft",   ({ name }) => notify(`${name} left`, "muted"));
+    sock.on("joinError",    (msg)      => setJoinError(msg));
 
-    s.on("gameStarting", ({ countdown: cd }) => {
+    sock.on("gameStarting", ({ countdown: cd }) => {
       setPhase("countdown");
       setCountdown(cd);
     });
 
-    s.on("countdown", (n) => setCountdown(n));
+    sock.on("countdown", (n) => setCountdown(n));
 
-    s.on("question", (q) => {
+    sock.on("question", (q) => {
       setCurrentQuestionId(q.id);
-      setQuestion(translateQ(q));
+      questionIdRef.current = q.id;
+      setQuestion(translateQ(q, langRef.current));
       setPhase("question");
       setReveal(null);
       setMyAnswer(null);
@@ -119,25 +114,25 @@ export default function App() {
       setTimer(20);
     });
 
-    s.on("timer",         (t)         => setTimer(t));
-    s.on("answeredCount", ({ count }) => setAnsweredCount(count));
-    s.on("answerAck",     ({ optionIndex }) => setMyAnswer(optionIndex));
+    sock.on("timer",         (t)           => setTimer(t));
+    sock.on("answeredCount", ({ count })   => setAnsweredCount(count));
+    sock.on("answerAck",     ({ optionIndex }) => setMyAnswer(optionIndex));
 
-    s.on("reveal", (data) => {
+    sock.on("reveal", (data) => {
       setReveal({
         ...data,
-        explanation: getExplanation(currentQuestionId) || data.explanation
+        explanation: getExplanation(questionIdRef.current, langRef.current) || data.explanation
       });
       setPhase("reveal");
       setLeaderboard(data.leaderboard || []);
     });
 
-    s.on("gameOver", ({ leaderboard: lb }) => {
+    sock.on("gameOver", ({ leaderboard: lb }) => {
       setPhase("finished");
       setLeaderboard(lb);
     });
 
-    s.on("gameReset", () => {
+    sock.on("gameReset", () => {
       setPhase("lobby");
       setReveal(null);
       setQuestion(null);
@@ -145,45 +140,55 @@ export default function App() {
       setAnsweredCount(0);
     });
 
-    s.on("error", (msg) => notify(msg, "error"));
+    sock.on("error", (msg) => notify(msg, "error"));
 
-    return () => s.removeAllListeners();
-  }, [sock, notify, translateQ, getExplanation, currentQuestionId]);
+    // Cleanup
+    return () => {
+      sock.off("connect");
+      sock.off("disconnect");
+      sock.off("gameState");
+      sock.off("youAreHost");
+      sock.off("authResult");
+      sock.off("playerJoined");
+      sock.off("playerLeft");
+      sock.off("joinError");
+      sock.off("gameStarting");
+      sock.off("countdown");
+      sock.off("question");
+      sock.off("timer");
+      sock.off("answeredCount");
+      sock.off("answerAck");
+      sock.off("reveal");
+      sock.off("gameOver");
+      sock.off("gameReset");
+      sock.off("error");
+    };
+  }, []);
 
-  // When language changes mid-game, re-translate the current question immediately
-  useEffect(() => {
-    if (lang && question) {
-      setQuestion(translateQ(question));
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [lang]);
-
-  const handleHostAuth = useCallback((password) => {
+  const handleHostAuth = (password) => {
     sessionStorage.setItem("oq_host_pw", password);
     sock.emit("authHost", { password });
-  }, [sock]);
+  };
 
-  const handleJoin = useCallback((name) => {
+  const handleJoin = (name) => {
     setMyName(name);
     setJoined(true);
     setJoinError(null);
     sock.emit("join", { name });
-  }, [sock]);
+  };
 
-  const handleStart  = useCallback((opts) => sock.emit("startGame", opts), [sock]);
-  const handleAnswer = useCallback((i) => {
-    sock.emit("answer", { optionIndex: i });
-    setMyAnswer(i);
-  }, [sock]);
-  const handleReset  = useCallback(() => sock.emit("resetGame"), [sock]);
+  const handleStart  = (opts) => sock.emit("startGame", opts);
+  const handleAnswer = (i)    => { sock.emit("answer", { optionIndex: i }); setMyAnswer(i); };
+  const handleReset  = ()     => sock.emit("resetGame");
 
-  // ── Language picker — shown first, nothing else renders until selected ───
+  // ── Language picker first ─────────────────────────────────────────────────
   if (!lang) {
     return <LanguagePicker onSelect={setLang} />;
   }
 
   const langData = translations[lang];
 
+  // ── Main app ──────────────────────────────────────────────────────────────
   return (
     <div style={{ minHeight: "100vh" }}>
       {/* Live dot */}
@@ -192,7 +197,7 @@ export default function App() {
         {connected ? "LIVE" : "OFFLINE"}
       </div>
 
-      {/* Language badge — click to change */}
+      {/* Language badge */}
       <div
         onClick={() => setLang(null)}
         title="Change language"
@@ -208,6 +213,7 @@ export default function App() {
         </div>
       )}
 
+      {/* Screens */}
       {(phase === "lobby" || phase === "countdown") && (
         <Lobby
           players={players} myId={myId} myName={myName}
