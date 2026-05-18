@@ -1,5 +1,7 @@
 import { useEffect, useState, useCallback, useRef } from "react";
 import { io } from "socket.io-client";
+import translations from "./data/translations";
+import LanguagePicker from "./components/LanguagePicker";
 import Lobby from "./components/Lobby";
 import GameScreen from "./components/GameScreen";
 import Leaderboard from "./components/Leaderboard";
@@ -10,6 +12,9 @@ export default function App() {
   const sockRef = useRef(null);
   if (!sockRef.current) sockRef.current = io(SOCKET_URL);
   const sock = sockRef.current;
+
+  // Language is the first gate — nothing else shows until this is set
+  const [lang, setLang] = useState(null);
 
   const [phase, setPhase] = useState("lobby");
   const [players, setPlayers] = useState({});
@@ -30,6 +35,28 @@ export default function App() {
   const [joined, setJoined] = useState(false);
   const [joinError, setJoinError] = useState(null);
 
+  // The translated questions for this user's chosen language
+  const langData = lang ? translations[lang] : null;
+
+  // Given a question id from the server, find the translated version
+  const translateQuestion = useCallback((serverQ) => {
+    if (!langData || !serverQ) return serverQ;
+    const found = langData.questions.find(q => q.id === serverQ.id);
+    if (!found) return serverQ;
+    return {
+      ...serverQ,
+      question: found.question,
+      options: found.options,
+      // keep category and id from server
+    };
+  }, [langData]);
+
+  const translateExplanation = useCallback((questionId) => {
+    if (!langData || !questionId) return null;
+    const found = langData.questions.find(q => q.id === questionId);
+    return found?.explanation || null;
+  }, [langData]);
+
   const notify = useCallback((msg, type = "info") => {
     setToast({ msg, type });
     setTimeout(() => setToast(null), 3500);
@@ -39,11 +66,9 @@ export default function App() {
     sock.on("connect", () => {
       setMyId(sock.id);
       setConnected(true);
-      // If we previously authenticated as host this session, re-auth silently
       const savedPw = sessionStorage.getItem("oq_host_pw");
       if (savedPw) sock.emit("authHost", { password: savedPw });
     });
-
     sock.on("disconnect", () => setConnected(false));
 
     sock.on("gameState", (s) => {
@@ -52,11 +77,10 @@ export default function App() {
       setLeaderboard(s.leaderboard || []);
       setTotalQuestions(s.totalQuestions || 0);
       setQuestionIndex(s.questionIndex ?? -1);
-      if (s.question) setQuestion(s.question);
+      if (s.question) setQuestion(translateQuestion(s.question));
     });
 
     sock.on("youAreHost", () => setIsHost(true));
-
     sock.on("authResult", ({ ok, message }) => {
       if (!ok) {
         notify(message || "Wrong password", "error");
@@ -66,13 +90,13 @@ export default function App() {
 
     sock.on("playerJoined", ({ name }) => notify(`${name} joined!`));
     sock.on("playerLeft",   ({ name }) => notify(`${name} left`, "muted"));
-    sock.on("joinError",    (msg)     => setJoinError(msg));
+    sock.on("joinError",    (msg)      => setJoinError(msg));
 
     sock.on("gameStarting", ({ countdown: cd }) => { setPhase("countdown"); setCountdown(cd); });
-    sock.on("countdown",    (n) => setCountdown(n));
+    sock.on("countdown", (n) => setCountdown(n));
 
     sock.on("question", (q) => {
-      setQuestion(q);
+      setQuestion(translateQuestion(q));
       setPhase("question");
       setReveal(null);
       setMyAnswer(null);
@@ -80,12 +104,17 @@ export default function App() {
       setTimer(20);
     });
 
-    sock.on("timer",         (t)    => setTimer(t));
+    sock.on("timer", (t) => setTimer(t));
     sock.on("answeredCount", ({ count }) => setAnsweredCount(count));
-    sock.on("answerAck",     ({ optionIndex }) => setMyAnswer(optionIndex));
+    sock.on("answerAck", ({ optionIndex }) => setMyAnswer(optionIndex));
 
     sock.on("reveal", (data) => {
-      setReveal(data);
+      // Attach translated explanation to reveal data
+      const translatedExplanation = translateExplanation(data.correctAnswer !== undefined && question ? question.id : null);
+      setReveal({
+        ...data,
+        explanation: translatedExplanation || data.explanation
+      });
       setPhase("reveal");
       setLeaderboard(data.leaderboard || []);
     });
@@ -101,13 +130,13 @@ export default function App() {
       setQuestion(null);
       setMyAnswer(null);
       setAnsweredCount(0);
-      // isHost is re-confirmed via youAreHost emitted right after gameReset by server
     });
 
-    return () => sock.removeAllListeners();
-  }, [sock, notify]);
+    sock.on("error", (msg) => notify(msg, "error"));
 
-  // ── Actions ──────────────────────────────────────────────────────────────────
+    return () => sock.removeAllListeners();
+  }, [sock, notify, translateQuestion, translateExplanation, question]);
+
   const handleHostAuth = useCallback((password) => {
     sessionStorage.setItem("oq_host_pw", password);
     sock.emit("authHost", { password });
@@ -120,9 +149,12 @@ export default function App() {
     sock.emit("join", { name });
   }, [sock]);
 
-  const handleStart = useCallback((opts) => sock.emit("startGame", opts), [sock]);
+  const handleStart  = useCallback((opts) => sock.emit("startGame", opts), [sock]);
   const handleAnswer = useCallback((i) => { sock.emit("answer", { optionIndex: i }); setMyAnswer(i); }, [sock]);
   const handleReset  = useCallback(() => sock.emit("resetGame"), [sock]);
+
+  // ── Step 1: Language picker — shown to everyone before anything else ─────
+  if (!lang) return <LanguagePicker onSelect={setLang} />;
 
   return (
     <div style={{ minHeight: "100vh" }}>
@@ -130,6 +162,15 @@ export default function App() {
       <div style={{ position: "fixed", top: 12, right: 14, zIndex: 999, display: "flex", alignItems: "center", gap: 6, fontSize: 11, color: connected ? "var(--accent)" : "var(--red)", fontFamily: "'Space Mono',monospace", opacity: 0.65 }}>
         <div style={{ width: 6, height: 6, borderRadius: "50%", background: connected ? "var(--accent)" : "var(--red)", animation: connected ? "pulse 2s infinite" : "none" }} />
         {connected ? "LIVE" : "OFFLINE"}
+      </div>
+
+      {/* Language badge — tap to change */}
+      <div
+        onClick={() => setLang(null)}
+        style={{ position: "fixed", top: 12, left: 14, zIndex: 999, display: "flex", alignItems: "center", gap: 6, fontSize: 11, color: "var(--muted)", fontFamily: "'Space Mono',monospace", cursor: "pointer", opacity: 0.7 }}
+        title="Change language"
+      >
+        {langData?.flag} {langData?.name}
       </div>
 
       {/* Toast */}
