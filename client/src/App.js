@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback, useRef } from "react";
 import { io } from "socket.io-client";
-import translations from "./data/translations";
+import translations, { ui } from "./data/translations";
 import LanguagePicker from "./components/LanguagePicker";
 import Lobby from "./components/Lobby";
 import GameScreen from "./components/GameScreen";
@@ -218,7 +218,7 @@ export default function App() {
         <Lobby
           players={players} myId={myId} myName={myName}
           isHost={isHost} phase={phase} countdown={countdown}
-          joined={joined} joinError={joinError}
+          joined={joined} joinError={joinError} t={ui[lang] || ui.en}
           onJoin={handleJoin} onStart={handleStart} onHostAuth={handleHostAuth}
         />
       )}
